@@ -13,7 +13,7 @@
 int randomNumber() {
 	static std::random_device rd; // obtain a random number from hardware
 	static std::mt19937 gen(rd()); // seed the generator
-	static std::uniform_int_distribution<> distr(1, 64); // define the range
+	static std::uniform_int_distribution<> distr(1, 16); // define the range
 	return distr(gen);
 }
 
@@ -30,10 +30,8 @@ uint64_t mix(uint64_t x) {
 struct Cell {
 	int row = 0;
 	int col = 0;
-	int index = row * 10 + col;
+	int index = 0;
 	int difficulty = randomNumber();
-	int correctValue = mix(index) >> (64 - difficulty);
-	char face = '*';
 	std::atomic<int> claim{ 0 };
 };
 
@@ -61,28 +59,55 @@ std::vector<Cell*> neighbors(Cell (&board)[10][10], int row, int col) {
 void printBoard(Cell (& board)[10][10]) {
 	for (int i = 0; i < ROW_LENGTH; i++) {
 		for (int j = 0; j < ROW_LENGTH; j++) {
-			std::cout << board[i][j].face;
+			std::cout << board[i][j].claim << " ";
 		}
 		std::cout << "\n";
 	}
+	std::cout << "\n";
 }
 
 // Write a program for each thread that searches the 4 surrounding cells
-void threadSearch(Cell (&board)[10][10], int row, int col) {
+void threadSearch(Cell (&board)[10][10], int row, int col, int teamNum) {
 	// Look at the 4 adjacent cells and see which ones have not been claimed
 	std::vector<Cell*> adjacent = neighbors(board, row, col);
 
 	for (Cell* cell : adjacent) {
-		if (cell->claim.load() == 0) {
-			// TODO: Search for a valid nonce and attempt to claim this cell
-		}
-	}
-	// Try to find correct value for selected cell by checking and incrementing
-	// If nonce = correctValue, cell.claimed = true, change face
-}
+		uint64_t attempt = 0;
 
-void doWork(std::atomic<int>& i, int expected, int desired) {
-	bool success = i.compare_exchange_strong(expected, desired);
+		if (cell->claim.load() != 0)
+			continue;
+
+		while (true) {
+			if (cell->claim.load() != 0) {
+				break;
+			}
+			
+			uint64_t hash = mix(attempt + cell->index);
+
+			bool valid = (hash >> (64 - cell->difficulty)) == 0;
+
+			if (valid){
+				int expected = 0;
+				bool success = cell->claim.compare_exchange_strong(expected, teamNum);
+
+				if (success){
+					std::cout << "Team " << teamNum
+						<< " claimed cell "
+						<< cell->index
+						<< " with nonce "
+						<< attempt << "\n";
+
+				}
+
+				break;
+			}
+
+			attempt++;
+		}
+	
+	}
+
+	// move to a cell on the border (probably will have to make a new function for that)
 }
 
 int main() {
@@ -99,21 +124,11 @@ int main() {
 	
 	printBoard(board);
 
-	Cell c1;
-	Cell c2;
-
-	std::thread t1(doWork, std::ref(c1.claim), 0, 1);
-	std::thread t2(doWork, std::ref(c1.claim), 0, 2);
-	std::thread t3(doWork, std::ref(c2.claim), 0, 1);
-	std::thread t4(doWork, std::ref(c2.claim), 0, 2);
+	std::thread t1(threadSearch, std::ref(board), 4, 5, 1);
+	std::thread t2(threadSearch, std::ref(board), 4, 5, 2);
 
 	t1.join();
 	t2.join();
-	t3.join();
-	t4.join();
 
-	std::cout << "Cell 1 claim: " << c1.claim.load() << "\n";
-	std::cout << "Cell 2 claim: " << c2.claim.load() << "\n";
-
-	return 0;
+	printBoard(board);
 }
