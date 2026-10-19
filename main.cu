@@ -13,7 +13,7 @@
 int randomNumber() {
 	static std::random_device rd; // obtain a random number from hardware
 	static std::mt19937 gen(rd()); // seed the generator
-	static std::uniform_int_distribution<> distr(1, 16); // define the range
+	static std::uniform_int_distribution<> distr(1, 24); // define the range
 	return distr(gen);
 }
 
@@ -102,40 +102,63 @@ void cellClaim(Cell* cell, int teamNum) {
 // returns a vector with every non-owned cell adjacent to an owned cell
 std::vector <Cell*> getFrontier(Cell (&board)[10][10], int teamNum) {
 	std::vector <Cell*> result;
+	bool added[10][10] = {};
 	// Iterate through each cell and add the cells adjacent to cells with claim = teamNum to the return vector
 	for (int row = 0; row < 10; row++) {
 		for (int col = 0; col < 10; col++) {
-			for (neighbors(board, row, col)) {
-				if (Cell)
+			// Pass over any non-team cells
+			if (board[row][col].claim.load() != teamNum)
+				continue;
+
+			for (Cell* cell : neighbors(board, row, col)) {
+				if (cell->claim.load() == 0 && !added[cell->row][cell->col]) {
+					result.push_back(cell);
+					added[cell->row][cell->col] = true;
+				}
 			}
 		}
 	}
+
+	return result;
 }
 
-// returns the lowest-difficulty cell adjacent to a currently owned cell
-Cell chooseNextCell(Cell currentCell) {
+// returns a pointer to the lowest-difficulty cell adjacent to a currently owned cell
+Cell* chooseLowestCell(Cell (&board)[10][10], int teamNum) {
+	Cell* lowest = nullptr;
+	// Iterate through each cell in vector returned from getFrontier
+	for (Cell* cell : getFrontier(board, teamNum)) {
+		// Another thread may have claimed this cell
+		if (cell->claim != 0) {
+			continue;
+		}
 
+		// Return lowest difficulty cell
+		if (lowest == nullptr || cell->difficulty < lowest->difficulty) {
+			lowest = cell;
+		}
+	}
+
+	return lowest;
 }
 
 // Write a program for each thread that searches the 4 surrounding cells
-void threadSearch(Cell (&board)[10][10], int row, int col, int teamNum) {
-	// Look at the 4 adjacent cells and see which ones have not been claimed
-	std::vector<Cell*> adjacent = neighbors(board, row, col);
+void threadAlgo(Cell (&board)[10][10], int teamNum) {
+	// Loops until chooseLowestCell returns null ptr (not exactly the same as the board being completely claimed, but good enough for now)
+	while (true) {
+		Cell *target = chooseLowestCell(board, teamNum);
 
-	for (Cell* cell : adjacent) {
-		if (cell->claim.load() != 0)
-			continue;
+		if (target == nullptr) {
+			break;
+		}
 
-		cellClaim(cell, teamNum);
+		cellClaim(target, teamNum);
 	}
-
-	// move to a cell on the border (probably will have to make a new function for that)
 }
 
 int main() {
 	Cell board[10][10];
 
-	// Initialize all board elements to '*'
+	// Initialize all board elements to '0'
 	for (int i = 0; i < ROW_LENGTH; i++) {
 		for (int j = 0; j < ROW_LENGTH; j++) {
 			board[i][j].row = i;
@@ -143,11 +166,21 @@ int main() {
 			board[i][j].index = i * ROW_LENGTH + j;
 		}
 	}
+
+	board[0][0].row = 0;
+	board[0][0].col = 0;
+	board[0][0].index = 0;
+	board[0][0].claim.store(1);
+	board[9][9].row = 0;
+	board[9][9].col = 0;
+	board[9][9].index = 0;
+	board[9][9].claim.store(2);
 	
 	printBoard(board);
 
-	std::thread t1(threadSearch, std::ref(board), 4, 5, 1);
-	std::thread t2(threadSearch, std::ref(board), 4, 5, 2);
+	// Test code
+	std::thread t1(threadAlgo, std::ref(board), 1);
+	std::thread t2(threadAlgo, std::ref(board), 2);
 
 	t1.join();
 	t2.join();
