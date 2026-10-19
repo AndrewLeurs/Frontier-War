@@ -66,45 +66,67 @@ void printBoard(Cell (& board)[10][10]) {
 	std::cout << "\n";
 }
 
+// Implements the claiming process for one cell
+void cellClaim(Cell* cell, int teamNum) {
+	uint64_t attempt = 0;
+
+	while (true) {
+		if (cell->claim.load() != 0) {
+			break;
+		}
+
+		uint64_t hash = mix(attempt + cell->index);
+
+		bool valid = (hash >> (64 - cell->difficulty)) == 0;
+
+		if (valid) {
+			int expected = 0;
+			bool success = cell->claim.compare_exchange_strong(expected, teamNum);
+
+			if (success) {
+				std::cout << "Team " << teamNum
+					<< " claimed cell "
+					<< cell->index
+					<< " with nonce "
+					<< attempt << "\n";
+
+			}
+
+			break;
+		}
+
+		attempt++;
+	}
+}
+
+// returns a vector with every non-owned cell adjacent to an owned cell
+std::vector <Cell*> getFrontier(Cell (&board)[10][10], int teamNum) {
+	std::vector <Cell*> result;
+	// Iterate through each cell and add the cells adjacent to cells with claim = teamNum to the return vector
+	for (int row = 0; row < 10; row++) {
+		for (int col = 0; col < 10; col++) {
+			for (neighbors(board, row, col)) {
+				if (Cell)
+			}
+		}
+	}
+}
+
+// returns the lowest-difficulty cell adjacent to a currently owned cell
+Cell chooseNextCell(Cell currentCell) {
+
+}
+
 // Write a program for each thread that searches the 4 surrounding cells
 void threadSearch(Cell (&board)[10][10], int row, int col, int teamNum) {
 	// Look at the 4 adjacent cells and see which ones have not been claimed
 	std::vector<Cell*> adjacent = neighbors(board, row, col);
 
 	for (Cell* cell : adjacent) {
-		uint64_t attempt = 0;
-
 		if (cell->claim.load() != 0)
 			continue;
 
-		while (true) {
-			if (cell->claim.load() != 0) {
-				break;
-			}
-			
-			uint64_t hash = mix(attempt + cell->index);
-
-			bool valid = (hash >> (64 - cell->difficulty)) == 0;
-
-			if (valid){
-				int expected = 0;
-				bool success = cell->claim.compare_exchange_strong(expected, teamNum);
-
-				if (success){
-					std::cout << "Team " << teamNum
-						<< " claimed cell "
-						<< cell->index
-						<< " with nonce "
-						<< attempt << "\n";
-
-				}
-
-				break;
-			}
-
-			attempt++;
-		}
-	
+		cellClaim(cell, teamNum);
 	}
 
 	// move to a cell on the border (probably will have to make a new function for that)
