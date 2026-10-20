@@ -13,11 +13,11 @@
 int randomNumber() {
 	static std::random_device rd; // obtain a random number from hardware
 	static std::mt19937 gen(rd()); // seed the generator
-	static std::uniform_int_distribution<> distr(1, 24); // define the range
+	static std::uniform_int_distribution<> distr(1, 16); // define the range
 	return distr(gen);
 }
 
-// Integer Scrambler
+// Integer Scrambler (SplitMix64)
 uint64_t mix(uint64_t x) {
 	x += 0x9E3779B97F4A7C15ull;
 	x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
@@ -57,18 +57,20 @@ std::vector<Cell*> neighbors(Cell (&board)[10][10], int row, int col) {
 }
 
 void printBoard(Cell (& board)[10][10]) {
+	std::cout << "=== FRONTIER WAR ===\n\n";
+
 	for (int i = 0; i < ROW_LENGTH; i++) {
 		for (int j = 0; j < ROW_LENGTH; j++) {
 			std::cout << board[i][j].claim << " ";
 		}
 		std::cout << "\n";
 	}
-	std::cout << "\n";
+	std::cout << std::flush;
 }
 
 // Implements the claiming process for one cell
-void cellClaim(Cell* cell, int teamNum) {
-	uint64_t attempt = 0;
+void cellClaim(Cell* cell, int teamNum, uint64_t startingNum) {
+	uint64_t attempt = startingNum;
 
 	while (true) {
 		if (cell->claim.load() != 0) {
@@ -84,18 +86,13 @@ void cellClaim(Cell* cell, int teamNum) {
 			bool success = cell->claim.compare_exchange_strong(expected, teamNum);
 
 			if (success) {
-				std::cout << "Team " << teamNum
-					<< " claimed cell "
-					<< cell->index
-					<< " with nonce "
-					<< attempt << "\n";
-
+				std::cout << "Team " << teamNum << " claimed cell " << cell->index << " with nonce " << attempt << "\n";
 			}
 
 			break;
 		}
 
-		attempt++;
+		attempt += 2;
 	}
 }
 
@@ -128,7 +125,7 @@ Cell* chooseLowestCell(Cell (&board)[10][10], int teamNum) {
 	// Iterate through each cell in vector returned from getFrontier
 	for (Cell* cell : getFrontier(board, teamNum)) {
 		// Another thread may have claimed this cell
-		if (cell->claim != 0) {
+		if (cell->claim.load() != 0) {
 			continue;
 		}
 
@@ -142,7 +139,7 @@ Cell* chooseLowestCell(Cell (&board)[10][10], int teamNum) {
 }
 
 // Write a program for each thread that searches the 4 surrounding cells
-void threadAlgo(Cell (&board)[10][10], int teamNum) {
+void threadAlgo(Cell (&board)[10][10], int teamNum, uint64_t startingNum) {
 	// Loops until chooseLowestCell returns null ptr (not exactly the same as the board being completely claimed, but good enough for now)
 	while (true) {
 		Cell *target = chooseLowestCell(board, teamNum);
@@ -151,8 +148,23 @@ void threadAlgo(Cell (&board)[10][10], int teamNum) {
 			break;
 		}
 
-		cellClaim(target, teamNum);
+		cellClaim(target, teamNum, startingNum);
 	}
+}
+
+bool gameOver(Cell(&board)[10][10]) {
+	bool boardFull = true;
+
+	for (int i = 0; i < ROW_LENGTH; i++) {
+		for (int j = 0; j < ROW_LENGTH; j++) {
+			if (board[i][j].claim.load() == 0) {
+				boardFull = false;
+				return boardFull;
+			}
+		}
+	}
+
+	return boardFull;
 }
 
 int main() {
@@ -167,23 +179,22 @@ int main() {
 		}
 	}
 
-	board[0][0].row = 0;
-	board[0][0].col = 0;
-	board[0][0].index = 0;
+	// Set starting points
 	board[0][0].claim.store(1);
-	board[9][9].row = 0;
-	board[9][9].col = 0;
-	board[9][9].index = 0;
 	board[9][9].claim.store(2);
 	
 	printBoard(board);
 
 	// Test code
-	std::thread t1(threadAlgo, std::ref(board), 1);
-	std::thread t2(threadAlgo, std::ref(board), 2);
+	std::thread t11(threadAlgo, std::ref(board), 1, 0);
+	std::thread t12(threadAlgo, std::ref(board), 1, 1);
+	std::thread t21(threadAlgo, std::ref(board), 2, 0);
+	std::thread t22(threadAlgo, std::ref(board), 2, 1);
 
-	t1.join();
-	t2.join();
+	t11.join();
+	t12.join();
+	t21.join();
+	t22.join();
 
 	printBoard(board);
 }
